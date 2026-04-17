@@ -32,7 +32,7 @@ jobs:
           pip install pyelftools
 
       - name: Build with PyInstaller
-        run: pyinstaller -F -n 16KbChecker 16KbChecker.py
+        run: pyinstaller -F -n 16KbChecker main.py
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
