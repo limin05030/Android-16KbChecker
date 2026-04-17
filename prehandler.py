@@ -9,33 +9,31 @@ from model import FileInfo
 
 
 def __unzip(zip_path) -> str:
-    unzip_temp_dir = tempfile.mkdtemp()
+    _unzip_temp_dir = tempfile.mkdtemp()
 
     with zipfile.ZipFile(zip_path, 'r') as zip_ref:
         for member in zip_ref.namelist():
             # 将目标目录与成员路径拼接后，检查是否仍在 extract_path 内
-            abs_path = os.path.join(os.path.abspath(unzip_temp_dir), member)
-            if not os.path.abspath(abs_path).startswith(os.path.abspath(unzip_temp_dir)):
+            _abs_path = os.path.join(os.path.abspath(_unzip_temp_dir), member)
+            if not os.path.abspath(_abs_path).startswith(os.path.abspath(_unzip_temp_dir)):
                 raise Exception(f"检测到路径遍历攻击: {member}")
-        zip_ref.extractall(unzip_temp_dir)
+        zip_ref.extractall(_unzip_temp_dir)
 
-    return unzip_temp_dir
+    return _unzip_temp_dir
 
 def __find_so_files(file_path) -> list[str]:
     if not os.path.exists(file_path):
         return []
 
     if os.path.isfile(file_path):
-        if file_path.endswith(".so"):
-            return [file_path]
-        else:
-            return []
-
-    _os_files = []
-    for f in os.listdir(file_path):
-        _os_files += __find_so_files(os.path.join(file_path, f))
-
-    return _os_files
+        return [file_path] if file_path.endswith(".so") else []
+    elif os.path.isdir(file_path):
+        _os_files = []
+        for f in os.listdir(file_path):
+            _os_files.extend(__find_so_files(os.path.join(file_path, f)))
+        return _os_files
+    else:
+        return []
 
 def get_so_files(file_path) -> FileInfo | None:
     """从 file_path 中获取os文件"""

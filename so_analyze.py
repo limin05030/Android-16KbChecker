@@ -5,7 +5,6 @@ import os
 import sys
 import traceback
 
-# pyelftools
 from elftools.elf.elffile import ELFFile
 from model import SoInfo
 from utils import exec_cmd
@@ -22,63 +21,44 @@ abi_maps = {
 }
 
 def __get_so_abi(so_path: str) -> str | None:
+    # noinspection PyBroadException
     try:
         with open(so_path, 'rb') as f:
-            elf = ELFFile(f)
-            # 获取机器架构
-            arch = elf.header.e_machine
-            # 获取文件类型
-            file_type = elf.header.e_type
-            # 获取 ELF 位数
-            elf_class = elf.header['e_ident']['EI_CLASS']
-
-            # print(f"文件架构: {arch}")
-            # print(f"文件类型: {file_type} (共享库: 'ET_DYN')")
-            # print(f"ELF 位数: {elf_class} (32位: 'ELFCLASS32', 64位: 'ELFCLASS64')")
-
-            # 可选：进一步解析 ELF 信息
-            # ... 参考 `pyelftools` 文档获取更多信息
-
-            return abi_maps[arch]
+            _elf = ELFFile(f)
+            _arch = _elf.header.e_machine
+            return abi_maps[_arch]
     except Exception:
-        # print(f"读取文件 {file_path} 时出错: {e}")
         traceback.print_exc()
 
     return None
 
-def so_analyze(llvm_objdump: str, os_files: list[str]) -> dict[str, list[SoInfo]]:
+def so_analyze(llvm_objdump: str, os_files: list[str]) -> dict[str, list[SoInfo]] | None:
     """分析so文件是否支持 16kb size"""
     print("analyze .so files...")
 
-    check_result = {}
-    for os_file in os_files:
-        abi = __get_so_abi(os_file) or "N/A"
+    _filter_cmd = "findstr" if sys.platform.startswith("win") else "grep"
 
-        if sys.platform.startswith("win"):
-            code, data = exec_cmd(f"\"{llvm_objdump}\" -p \"{os_file}\" | findstr \"LOAD\"")
-        else:
-            code, data = exec_cmd(f"\"{llvm_objdump}\" -p \"{os_file}\" | grep \"LOAD\"")
+    _check_result = {}
+    for _os_file in os_files:
+        _code, _data = exec_cmd(f"\"{llvm_objdump}\" -p \"{_os_file}\" | {_filter_cmd} \"LOAD\"")
+        if _code != 0 or not _data:
+            print("Error:", _code, _data)
+            return None
 
-        if code != 0:
-            print(data)
-            exit(0)
-
-        lines = data.split("\n")
-        min_align = 999
-        for line in lines:
+        _lines = _data.splitlines()
+        _min_align = 999
+        for _line in _lines:
             try:
-                align = int(line[-2:])
-                if align < min_align:
-                    min_align = align
+                _align = int(_line[-2:])
+                if _align < _min_align:
+                    _min_align = _align
             except ValueError:
-                print(lines)
-                print("cannot parse align number")
-                exit(0)
+                print(_lines)
+                print("Error: cannot parse align number")
+                return None
 
-        so_list = check_result.get(abi)
-        if so_list is None:
-            so_list = []
-            check_result[abi] = so_list
-        so_list.append(SoInfo(abi, os.path.basename(os_file), min_align))
+        _abi = __get_so_abi(_os_file) or "N/A"
+        _so_list = _check_result.setdefault(_abi, [])
+        _so_list.append(SoInfo(_abi, os.path.basename(_os_file), _min_align))
 
-    return check_result
+    return _check_result

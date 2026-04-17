@@ -28,32 +28,40 @@ def __get_app_data_dir() -> str:
 def __search_android_sdk_in_environment() -> str | None:
     """通过环境变量或adb命令的路径找到sdk的路径"""
 
-    adb_name = "adb.exe" if sys.platform.startswith("win") else "adb"
+    _adb_name = "adb.exe" if sys.platform.startswith("win") else "adb"
 
     # 检查环境变量 ANDROID_HOME
     _sdk_path = os.getenv("ANDROID_HOME")
     if _sdk_path:
-        _adb_path = os.path.join(_sdk_path, "platform-tools", adb_name)
+        _adb_path = os.path.join(_sdk_path, "platform-tools", _adb_name)
         if os.path.exists(_adb_path):
             return _sdk_path
 
     # 检查环境变量 ANDROID_SDK_ROOT
     _sdk_path = os.getenv("ANDROID_SDK_ROOT")
     if _sdk_path:
-        _adb_path = os.path.join(_sdk_path, "platform-tools", adb_name)
+        _adb_path = os.path.join(_sdk_path, "platform-tools", _adb_name)
         if os.path.exists(_adb_path):
             return _sdk_path
 
     # 检查 adb 命令路径
-    if sys.platform.startswith("win"):
-        _, _data = exec_cmd('where adb')
-        if isinstance(_data, str) and _data.endswith('/adb.exe') and os.path.exists(_data):
-            return os.path.dirname(os.path.dirname(_data))
-    # elif sys.platform.startswith("linux") or sys.platform.startswith("darwin"):
-    else:
-        _, _data = exec_cmd('which adb')
-        if isinstance(_data, str) and _data.endswith('/adb') and os.path.exists(_data):
-            return os.path.dirname(os.path.dirname(_data))
+    _, _data = exec_cmd(f'{"where" if sys.platform.startswith("win") else "which"} adb')
+    if not _data:
+        return None
+
+    # 从adb命令路径中获取sdk路径
+    _lines = _data.splitlines()
+    for _adb_path in _lines:
+        if not os.path.exists(_adb_path):
+            continue
+
+        if os.path.basename(_adb_path) != _adb_name:
+            continue
+
+        if os.path.basename(os.path.dirname(_adb_path)) != "platform-tools":
+            continue
+
+        return os.path.dirname(os.path.dirname(_adb_path))
 
     return None
 
@@ -69,22 +77,20 @@ def __read_android_sdk_from_config() -> str | None:
         return None
 
     with open(_config_file, mode='r', encoding='utf-8') as f:
-        adb_name = "adb.exe" if sys.platform.startswith("win") else "adb"
-        for config_line in f.readlines():
+        _adb_name = "adb.exe" if sys.platform.startswith("win") else "adb"
+        for config_line in f.read().splitlines():
             if '=' in config_line:
-                k, v = config_line.replace('\n', '').split('=', maxsplit=1)
+                k, v = config_line.split('=', maxsplit=1)
                 k = k.strip()
                 v = v.strip()
                 if k == "sdk_dir" and len(v) > 0:
-                    if os.path.exists(os.path.join(v, "platform-tools", adb_name)):
+                    if os.path.exists(os.path.join(v, "platform-tools", _adb_name)):
                         return v
 
     return None
 
 def __find_android_sdk_path_window(path: str, max_deep: int) -> str | None:
     """在 Window 中递归搜索 Android SDK 路径"""
-    if not isinstance(path, str) or len(path.strip()) == 0:
-        return None
 
     if not os.path.isdir(path):
         return None
@@ -92,15 +98,21 @@ def __find_android_sdk_path_window(path: str, max_deep: int) -> str | None:
     if len(path.replace("\\", "/").split("/")) - 1 > max_deep:
         return None
 
-    if os.path.exists(os.path.join(path, "platform-tools/adb.exe")):
+    if os.path.exists(os.path.join(path, "platform-tools", "adb.exe")):
         return path
+
+    _skip_dirs = ["Windows", "Program Files", "Program Files (x86)", "ProgramData"]
 
     try:
         for f in os.listdir(path):
-            if f in ["Windows", "Program Files", "Program Files (x86)", "ProgramData"]:
+            if f in _skip_dirs:
                 continue
 
-            _sdk_path = __find_android_sdk_path_window(os.path.join(path, f), max_deep)
+            _full_path = os.path.join(path, f)
+            if not os.path.isdir(_full_path):
+                continue
+
+            _sdk_path = __find_android_sdk_path_window(_full_path, max_deep)
             if _sdk_path:
                 return _sdk_path
     except PermissionError:
@@ -110,8 +122,6 @@ def __find_android_sdk_path_window(path: str, max_deep: int) -> str | None:
 
 def __find_android_sdk_path_unix(path: str, max_deep: int) -> str | None:
     """在 Unix/Linux/macOS 文件系统中递归搜索 Android SDK 路径"""
-    if not isinstance(path, str) or len(path.strip()) == 0:
-        return None
 
     if not os.path.isdir(path):
         return None
@@ -126,37 +136,25 @@ def __find_android_sdk_path_unix(path: str, max_deep: int) -> str | None:
         return path
 
     # 跳过常见的系统目录，避免无效扫描
-    skip_dirs = {
+    _skip_dirs = {
         "bin", "boot", "dev", "etc", "lib", "lib64", "lost+found",
         "media", "mnt", "proc", "root", "run", "sbin", "srv", "sys",
         "tmp", "usr", "var",  # Linux 常见系统目录
         "System", "Library", "Applications", "Volumes", "Network",  # macOS 特有
-        "home"  # 注意：跳过 /home 本身，但会递归进入 /home/username
     }
 
     try:
         for entry in os.listdir(path):
-            # 跳过指定的系统目录
-            if entry in skip_dirs:
+            if entry in _skip_dirs:
                 continue
 
-            full_path = os.path.join(path, entry)
-            if os.path.isdir(full_path):
-                # 如果 entry 是 "home"，需要进入其子目录（用户目录）继续搜索
-                if entry == "home":
-                    try:
-                        for user_dir in os.listdir(full_path):
-                            user_full = os.path.join(full_path, user_dir)
-                            if os.path.isdir(user_full):
-                                result = __find_android_sdk_path_unix(user_full, max_deep)
-                                if result:
-                                    return result
-                    except PermissionError:
-                        continue
-                else:
-                    result = __find_android_sdk_path_unix(full_path, max_deep)
-                    if result:
-                        return result
+            _full_path = os.path.join(path, entry)
+            if not os.path.isdir(_full_path):
+                continue
+
+            _sdk_path = __find_android_sdk_path_unix(_full_path, max_deep)
+            if _sdk_path:
+                return _sdk_path
     except PermissionError:
         pass
 
@@ -175,18 +173,13 @@ def __search_android_sdk_in_file_system() -> str | None:
             _sdk_path = __find_android_sdk_path_window(f"{_drive}\\", max_deep=2)
             if _sdk_path:
                 break
-    elif sys.platform.startswith('darwin'):  # macOS
+    else:  # macOS、Linux 及其他类 Unix
         print("search android sdk in / ...")
-        _sdk_path = __find_android_sdk_path_unix("/", max_deep=8)
-    else:  # Linux 及其他类 Unix
-        print("search android sdk in / ...")
-        _sdk_path = __find_android_sdk_path_unix("/", max_deep=8)
+        _sdk_path = __find_android_sdk_path_unix("/", max_deep=5)
 
     # 搜索到了SDK，将SDK路径保存到配置文件中，以便下次使用时可以快速读取
     if _sdk_path:
         _data_dir = __get_app_data_dir()
-        if not os.path.exists(_data_dir):
-            os.makedirs(_data_dir)
         _config_file = os.path.join(_data_dir, __app_default_config_name)
         with open(_config_file, mode='w', encoding='utf-8') as f:
             f.write(f"sdk_dir={_sdk_path}\n")
@@ -207,55 +200,54 @@ def get_android_sdk_path() -> str | None:
         return _sdk_path
 
     # 遍历所有盘符查找sdk路径（找到后保存到配置文件中）
-    print(f"search android sdk...")
     _sdk_path = __search_android_sdk_in_file_system()
     if _sdk_path:
         return _sdk_path
 
-    print('android sdk path not found.')
+    print('Android SDK path not found.')
     return None
 
 def get_llvm_objdump_path() -> str | None:
     """获取llvm-objdump文件路径"""
 
     # android sdk path
-    sdk_path = get_android_sdk_path()
-    if not sdk_path:
+    _sdk_path = get_android_sdk_path()
+    if not _sdk_path:
         print("Android SDK path not found.")
         return None
 
     # NDK path
-    ndk_path = os.path.join(sdk_path, "ndk")
-    if not os.path.isdir(ndk_path):
+    _ndk_path = os.path.join(_sdk_path, "ndk")
+    if not os.path.isdir(_ndk_path):
         print("You haven't downloaded the ndk yet, please download it first.")
         return None
 
-    ndk_versions = (os.listdir(ndk_path))
-    if len(ndk_versions) == 0:
+    _ndk_versions = (os.listdir(_ndk_path))
+    if len(_ndk_versions) == 0:
         print("You haven't downloaded the ndk yet, please download it first.")
         return None
 
-    llvm_objdump = "llvm-objdump.exe" if sys.platform.startswith('win') else "llvm-objdump"
-    ndk_versions.sort(reverse=True)
-    for ndk_version in ndk_versions:
-        temp_path = os.path.join(ndk_path, ndk_version, "toolchains", "llvm", "prebuilt")
-        if not os.path.exists(temp_path):
+    _llvm_objdump = "llvm-objdump.exe" if sys.platform.startswith('win') else "llvm-objdump"
+    _ndk_versions.sort(reverse=True)
+    for _ndk_version in _ndk_versions:
+        _temp_path = os.path.join(_ndk_path, _ndk_version, "toolchains", "llvm", "prebuilt")
+        if not os.path.exists(_temp_path):
             continue
 
         # prebuilt 的下一个目录各平台都不一样，需要动态获取
         # 一般情况下这里只会有一个子目录
-        platform_abi_names = os.listdir(temp_path)
-        if len(platform_abi_names) == 0:
+        _platform_abi_names = os.listdir(_temp_path)
+        if len(_platform_abi_names) == 0:
             continue
 
-        for platform_abi_name in platform_abi_names:
-            objdump_path = os.path.join(temp_path, platform_abi_name, "bin", llvm_objdump)
-            if os.path.exists(objdump_path):
-                return objdump_path
+        for _platform_abi_name in _platform_abi_names:
+            _objdump_path = os.path.join(_temp_path, _platform_abi_name, "bin", _llvm_objdump)
+            if os.path.exists(_objdump_path):
+                return _objdump_path
 
-    print(f"{llvm_objdump} not found, please upgrade your NDK version.")
+    print(f"{_llvm_objdump} not found, please upgrade your NDK version.")
     return None
 
 
 if __name__ == '__main__':
-    get_android_sdk_path()
+    pass

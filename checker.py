@@ -10,19 +10,7 @@ from model import SoInfo
 from prehandler import get_so_files
 from so_analyze import so_analyze
 
-# main.py 中不要出现中文，否则用stickytape导出后的代码存在编码问题。
-# 用stickytape工具可以将所有代码打包成一个py文件
-# 安装：pip install stickytape
-# 使用：stickytape main.py --python-binary .venv/Scripts/python --output build/16KbChecker.py
-# output目录需要自己手动创建
-# 可进一步编译成pyc：python -m compileall -b build/16KbChecker.py
-# 最低支持运行版本：3.10
-# pip freeze > requirements.txt
-# pip install -r requirements.txt
-#
-# pip install pyinstaller
-# pyinstaller -F -n 16KbChecker main.py
-def dump_result(abi_info: dict[str, list[SoInfo]]) -> None:
+def __dump_result(abi_info: dict[str, list[SoInfo]]) -> None:
     """打印结果信息"""
 
     # 找出so名字最长的长度
@@ -55,25 +43,34 @@ def dump_result(abi_info: dict[str, list[SoInfo]]) -> None:
             else:
                 print(f"├─{'─' * _so_name_max_len}─┼─{'─' * second_column_width}─┤")
 
-def run(file_path):
-    if not os.path.exists(file_path):
-        print(f"<{file_path}> not exists.")
+def run(arguments: list[str]):
+    if len(arguments) < 2:
+        print(f"Usage: {arguments[0]} <so_file_path | so_dir_path | apk_path | aab_path>")
         sys.exit(0)
 
-    file_info = get_so_files(file_path)
-    if not file_info:
+    _file_path = arguments[1]
+    if not os.path.exists(_file_path):
+        print(f"<{_file_path}> not exists.")
         sys.exit(0)
 
-    if len(file_info.so_list) == 0:
-        print(".so file not found.")
+    _file_info = get_so_files(_file_path)
+    if not _file_info:
         sys.exit(0)
 
-    llvm_objdump = get_llvm_objdump_path()
-    if not llvm_objdump:
+    if len(_file_info.so_list) == 0:
+        print("no .so file found.")
         sys.exit(0)
 
-    result = so_analyze(llvm_objdump, os_files=file_info.so_list)
-    dump_result(result)
+    _llvm_objdump = get_llvm_objdump_path()
+    if not _llvm_objdump:
+        sys.exit(0)
 
-    if file_info.unzip_dir:
-        shutil.rmtree(file_info.unzip_dir)
+    _result = so_analyze(_llvm_objdump, os_files=_file_info.so_list)
+    if _result is None:
+        sys.exit(0)
+
+    if len(_result) > 0:
+        __dump_result(_result)
+
+    if _file_info.unzip_dir:
+        shutil.rmtree(_file_info.unzip_dir)
