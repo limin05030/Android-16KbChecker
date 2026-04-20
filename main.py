@@ -10,5 +10,8 @@ from checker import run
 #
 # pip install pyinstaller
 # pyinstaller -F -n 16KbChecker main.py
+#
+# git tag v1.0.0
+# git push origin v1.0.0
 if __name__ == '__main__':
     run(sys.argv)
